@@ -131,8 +131,20 @@ body.map-page #maptopbar .t{font-weight:700;font-size:1rem;color:#fff}
 body.map-page #maptopbar .hint{font-family:ui-monospace,Consolas,monospace;font-size:.75rem;color:var(--muted)}
 body.map-page .planner{height:calc(100dvh - 55px);grid-template-columns:340px 1fr;gap:0}
 body.map-page .planner>div:first-child{overflow-y:auto;padding:14px;background:var(--bg)}
-body.map-page .mapbox{border-radius:0;border:0;display:flex;flex-direction:column}
-body.map-page #trekmap,body.map-page #globe3d{flex:1;height:auto;min-height:0}
+body.map-page .mapbox{border-radius:0;border:0;display:flex;flex-direction:column;height:100%;min-height:0}
+body.map-page #trekmap,body.map-page #globe3d{flex:1 1 auto;height:auto;min-height:0}
+/* Map page: the readout under the map shrinks to one slim coordinates line,
+   and the waypoint card shrinks to just name + coordinates on one line —
+   so the map itself fills the whole right side. */
+body.map-page .mapfoot{flex:0 0 auto;flex-wrap:nowrap;padding:6px 12px;font-size:.8rem;gap:10px}
+body.map-page #mapcaption{display:none}
+body.map-page #coordreadout{white-space:nowrap}
+body.map-page #activereadout{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+body.map-page .wpwrap{padding:8px 12px!important;background:#0a1013;border-top:1px solid var(--line)}
+body.map-page .wpwrap .detail{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px;padding:7px 10px}
+body.map-page #wpdetail h3{font-size:.92rem;margin:0}
+body.map-page #wpdetail>p{display:none}
+body.map-page #wpdetail>p.mono:first-of-type{display:block;margin:0}
 @media (max-width:860px){
   .topnote{margin-left:0}
   body.map-page .planner{grid-template-columns:1fr;grid-template-rows:1fr minmax(0,32dvh);height:calc(100dvh - 55px)}
@@ -250,7 +262,7 @@ body.map-page #trekmap,body.map-page #globe3d{flex:1;height:auto;min-height:0}
         <span class="mono" id="coordreadout">CURSOR ▸ —</span>
         <span class="mono" id="activereadout"></span>
       </div>
-      <div style="padding:0 14px 14px">
+      <div class="wpwrap" style="padding:0 14px 14px">
         <div class="detail" id="wpdetail" aria-live="polite"></div>
       </div>
     </div>
@@ -649,7 +661,10 @@ function latLonToVec3(lat, lon, r){
 function flyGlobeTo(lat, lon){
   var p=latLonToVec3(lat, lon, 1);
   var az=Math.atan2(p.z, p.x);
-  var target=Math.PI/2 - az;
+  /* Rotating the group by R moves a point's azimuth to az - R, so the point
+     faces the camera (+Z, azimuth PI/2) when R = az - PI/2. The old
+     PI/2 - az put Gale on the far limb and lon 0 on the back of the globe. */
+  var target=az - Math.PI/2;
   while(target - globe.targetRY > Math.PI) target -= 2*Math.PI;
   while(globe.targetRY - target > Math.PI) target += 2*Math.PI;
   globe.targetRY=target;
@@ -697,23 +712,68 @@ function buildGlobeTexture(done){
       globe.material.map=tex; globe.material.needsUpdate=true;
       if(old) old.dispose();
     }
-    status.textContent="3D planet · texture stitched live from NASA Mars Trek tiles ("+(base?base.name.split(" — ")[0]:"")+", zoom 2 global grid) · Drag to spin · scroll to zoom · gold dots = NASA landing sites · numbered dots = this site’s waypoints — tap one.";
+    status.textContent="3D planet · texture stitched live from NASA Mars Trek tiles ("+(base?base.name.split(" — ")[0]:"")+", zoom 2 global grid) · Drag to spin · scroll to zoom · gold dots = NASA landing sites · numbered pins float above this site’s waypoints, each on a line to its true spot — tap a pin.";
     if(done) done();
   });
 }
+function wpSprite(i, selected){
+  /* Numbered pin drawn on a canvas — same look as the 2D map's .wp-dot.
+     A whole traverse spans only ~0.15° (~9 km), so on a planet-sized globe
+     the true positions are a fraction of a pixel apart: bare spheres there
+     merged into one unreadable, almost unclickable blob. */
+  var c=document.createElement("canvas"); c.width=c.height=96;
+  var g=c.getContext("2d");
+  g.beginPath(); g.arc(48,48,39,0,Math.PI*2);
+  g.fillStyle=selected?"#c75b28":"#df8c5f"; g.fill();
+  g.lineWidth=7; g.strokeStyle="#ffffff"; g.stroke();
+  g.fillStyle=selected?"#ffffff":"#221206";
+  g.font="700 42px system-ui, sans-serif"; g.textAlign="center"; g.textBaseline="middle";
+  g.fillText(String(i+1),48,51);
+  var tex=new THREE.CanvasTexture(c); tex.colorSpace=THREE.SRGBColorSpace;
+  var sp=new THREE.Sprite(new THREE.SpriteMaterial({map:tex, transparent:true, depthTest:true}));
+  sp.scale.set(0.115,0.115,1);
+  return sp;
+}
 function buildGlobeMarkers(){
   if(!globe.markers) return;
-  while(globe.markers.children.length) globe.markers.remove(globe.markers.children[0]);
+  while(globe.markers.children.length){
+    var old=globe.markers.children[0]; globe.markers.remove(old);
+    old.traverse(function(o){
+      if(o.geometry) o.geometry.dispose();
+      if(o.material){ if(o.material.map) o.material.map.dispose(); o.material.dispose(); }
+    });
+  }
   globe.wpMeshes=[];
   LANDINGS.forEach(function(s){
-    var m=new THREE.Mesh(new THREE.SphereGeometry(0.011,10,10), new THREE.MeshBasicMaterial({color:0xe8b45a}));
+    var m=new THREE.Mesh(new THREE.SphereGeometry(0.013,10,10), new THREE.MeshBasicMaterial({color:0xe8b45a}));
     m.position.copy(latLonToVec3(s.lat, s.lon, 1.005)); globe.markers.add(m);
   });
-  SITES[state.site].waypoints.forEach(function(w,i){
-    var col=(i===state.wp)?0xff5a2a:0xffffff;
-    var m=new THREE.Mesh(new THREE.SphereGeometry(0.02,12,12), new THREE.MeshBasicMaterial({color:col}));
-    m.position.copy(latLonToVec3(w.lat, w.lon, 1.008)); m.userData.wpIndex=i;
-    globe.markers.add(m); globe.wpMeshes.push(m);
+  var wps=SITES[state.site].waypoints, n=wps.length;
+  var anchors=wps.map(function(w){ return latLonToVec3(w.lat, w.lon, 1.01); });
+  /* Traverse line through the true surface points, as on the 2D map. */
+  var lineGeo=new THREE.BufferGeometry().setFromPoints(anchors);
+  globe.markers.add(new THREE.Line(lineGeo, new THREE.LineBasicMaterial({color:0xffd9c4, transparent:true, opacity:0.9})));
+  wps.forEach(function(w,i){
+    var anchor=latLonToVec3(w.lat, w.lon, 1.006);
+    /* Exact position: a small dot on the surface itself. */
+    var dot=new THREE.Mesh(new THREE.SphereGeometry(0.009,10,10), new THREE.MeshBasicMaterial({color:(i===state.wp)?0xff5a2a:0xffffff}));
+    dot.position.copy(anchor); globe.markers.add(dot);
+    /* Readable label: the numbered pin floats above its dot on a short
+       leader line. Pins are fanned around the site (they would otherwise
+       stack on one spot at globe scale); each pin stays tied by its leader
+       line to the waypoint's true coordinates, and tapping a pin selects
+       that waypoint exactly like the 2D map. */
+    var dir=anchor.clone().normalize();
+    var east=latLonToVec3(w.lat, w.lon+1, 1).sub(dir).normalize();
+    var north=latLonToVec3(w.lat+1, w.lon, 1).sub(dir).normalize();
+    var ang=(i/Math.max(n,1))*Math.PI*2 - Math.PI/2;
+    var labelDir=dir.clone().addScaledVector(east, Math.cos(ang)*0.085).addScaledVector(north, Math.sin(ang)*0.085).normalize();
+    var labelPos=labelDir.multiplyScalar(1.11);
+    var leaderGeo=new THREE.BufferGeometry().setFromPoints([anchor.clone().multiplyScalar(1.005), labelPos.clone().multiplyScalar(0.95)]);
+    globe.markers.add(new THREE.Line(leaderGeo, new THREE.LineBasicMaterial({color:0xffffff, transparent:true, opacity:0.55})));
+    var pin=wpSprite(i, i===state.wp);
+    pin.position.copy(labelPos); pin.userData.wpIndex=i;
+    globe.markers.add(pin); globe.wpMeshes.push(pin);
   });
   globe.siteKey=state.site+":"+state.wp;
 }
