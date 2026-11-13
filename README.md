@@ -43,4 +43,4 @@ Made by **The Tortured Devs Department**:
 
 ## Event
 
-Built for the **NASA Space Apps Hackathon**, Local Event in Cairo, Elsweedy Tech University.
+Built for the **NASA Space Apps Hackathon**, Local Event in Cairo, Elsewedy University of Technology - SUT.
